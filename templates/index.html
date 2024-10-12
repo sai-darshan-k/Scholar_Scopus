@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scopus and Scholar</title>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.16.9/xlsx.full.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 20px;
+            color: #333;
+        }
+
+        h1 {
+            color: #0056b3;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        button {
+            background-color: #0056b3;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            border-radius: 5px;
+            transition: background-color 0.3s;
+            display: block;
+            margin: 10px auto;
+        }
+
+        button:hover {
+            background-color: #004494;
+        }
+
+        #results {
+            margin-top: 20px;
+            max-width: 1000px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+            background-color: white;
+        }
+
+        th, td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+        }
+
+        th {
+            background-color: #0056b3;
+            color: white;
+            text-transform: uppercase;
+        }
+
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+
+        tr:hover {
+            background-color: #f1f1f1;
+        }
+
+        #searchContainer {
+            text-align: center;
+            margin: 20px auto;
+        }
+
+        #searchBar {
+            padding: 10px;
+            width: 300px;
+            font-size: 16px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .download-btn {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            border-radius: 5px;
+            transition: background-color 0.3s;
+            display: block;
+            margin: 20px auto;
+        }
+
+        .download-btn:hover {
+            background-color: #45a049;
+        }
+        
+        #loadingMessage {
+            text-align: center;
+            font-size: 18px;
+            color: #0056b3;
+            margin-top: 20px;
+        }
+        #searchContainer div {
+    display: flex;
+    justify-content: center;
+    margin: 0 auto;
+    width: 100%;
+    text-align: center;
+}
+#searchButton, #refreshButton {
+    margin: 0 5px;
+}
+        @media (max-width: 600px) {
+            button {
+                width: 100%;
+            }
+
+            #searchBar {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <body>
+        <h1>Scholars Data of Computer Science</h1>
+        <div id="searchContainer">
+            <input type="text" id="searchBar" placeholder="Search by name or title..." />
+            <div>
+                <button id="searchButton">Search</button>
+                <button id="refreshButton">Refresh</button>
+            </div>
+        </div>
+        <button id="scrapeButton">Fetch Data for All Scholars</button>
+        <div id="loadingMessage"></div>
+        <div id="results"></div>
+    <div id="googleScholarResults"></div>
+    <button id="downloadGoogleScholar" class="download-btn" style="display:none;">Download Google Scholar Data</button>
+    
+    <div id="scopusResults"></div>
+    <button id="downloadScopus" class="download-btn" style="display:none;">Download Scopus Data</button>
+    
+    <button id="downloadCombined" class="download-btn" style="display:none;">Download Combined Data</button>
+
+    <script>
+        let facultyData = [];
+        let scopusData = [];
+
+        $(document).ready(function() {
+    // Fetch Google Scholar data
+    $('#scrapeButton').click(function() {
+        $('#loadingMessage').text('Loading... please wait');
+        $('#results').empty();
+
+        // Perform the AJAX request to fetch combined data
+        $.ajax({
+            url: '/combined-scrape',
+            type: 'GET',
+            success: function(data) {
+                facultyData = data.google_scholar_data;  // Store the faculty data
+                scopusData = data.scopus_data; // Store the Scopus data
+                displayResults(facultyData, scopusData);
+                $('#loadingMessage').text('');  // Clear the loading message
+            },
+            error: function() {
+                $('#results').append('<p>An error occurred while fetching data.</p>');
+                $('#loadingMessage').text('');  // Clear the loading message
+            }
+        });
+    });
+
+    // Search function for Google Scholar and Scopus
+    $('#searchButton').click(function() {
+        const searchTerm = $('#searchBar').val().toLowerCase();
+        const foundFaculty = facultyData.filter(faculty => faculty.Name.toLowerCase().includes(searchTerm));
+        
+        // Update this part to check the author's name
+        const foundScopus = scopusData.filter(article => 
+            article.title.toLowerCase().includes(searchTerm) || 
+            (article.creator && article.creator.toLowerCase().includes(searchTerm))
+        );
+
+        // Clear results
+        $('#results').empty();
+
+        // Display found results if any
+        if (foundFaculty.length > 0 || foundScopus.length > 0) {
+            displaySearchResults(foundFaculty, foundScopus);
+        } else {
+            $('#results').append('<p>No matching records found.</p>');
+        }
+    });
+
+    // Refresh button to reset the view
+    $('#refreshButton').click(function() {
+        $('#searchBar').val('');
+        $('#results').empty();
+        displayResults(facultyData, scopusData); // Re-display all data
+    });
+});
+
+// Function to display Google Scholar and Scopus results
+function displayResults(facultyData, scopusData) {
+    $('#results').empty();
+    $('#results').append('<h2>Google Scholar Data</h2>');
+    let googleScholarTable = '<table><thead><tr>' +
+                             '<th>Name</th>' +
+                             '<th>Citations</th>' +
+                             '<th>H-Index</th>' +
+                             '<th>i10-Index</th>' +
+                             '<th>Yearly Citations</th>' +
+                             '</tr></thead><tbody>';
+
+    facultyData.forEach(function(faculty, index) {
+        googleScholarTable += '<tr>' +
+                              `<td><a href="#" class="faculty-name" data-index="${index}">${faculty.Name}</a></td>` +
+                              '<td>' + faculty.Citations + '</td>' +
+                              '<td>' + faculty.H_Index + '</td>' +
+                              '<td>' + faculty.i10_Index + '</td>' +
+                              '<td>' + JSON.stringify(faculty.Yearly_Citations) + '</td>' +
+                              '</tr>' +
+                              `<tr class="papers-row" id="papers-${index}" style="display:none"><td colspan="5"></td></tr>`;
+    });
+
+    googleScholarTable += '</tbody></table>';
+    $('#results').append(googleScholarTable);
+
+    // Display Scopus results
+    $('#results').append('<h2>Scopus Data</h2>');
+    let scopusTable = '<table><thead><tr>' +
+                      '<th>Title</th>' +
+                      '<th>Author</th>' +
+                      '<th>Publisher</th>' +
+                      '<th>Date</th>' +
+                      '<th>DOI</th>' +
+                      '<th>Citations</th>' +
+                      '</tr></thead><tbody>';
+
+    scopusData.forEach(function(article) {
+        scopusTable += '<tr>' +
+                       '<td>' + (article.title ? article.title : 'N/A') + '</td>' +
+                       '<td>' + (article.creator ? article.creator : 'N/A') + '</td>' +
+                       '<td>' + (article.publisher ? article.publisher : 'N/A') + '</td>' +
+                       '<td>' + (article.date ? article.date : 'N/A') + '</td>' +
+                       '<td>' + (article.doi ? article.doi : 'N/A') + '</td>' +
+                       '<td>' + (article.citations ? article.citations : 'N/A') + '</td>' +
+                       '</tr>';
+    });
+
+    scopusTable += '</tbody></table>';
+    $('#results').append(scopusTable);
+
+    $('#downloadGoogleScholar, #downloadScopus, #downloadCombined').show();
+
+    // Attach click event to show papers when faculty name is clicked
+    attachFacultyClickEvent();
+}
+            // Download functions
+            $('#downloadGoogleScholar').click(function() {
+                downloadExcel(facultyData, 'GoogleScholarData');
+            });
+
+            $('#downloadScopus').click(function() {
+                downloadExcel(scopusData, 'ScopusData');
+            });
+
+            $('#downloadCombined').click(function() {
+                downloadExcel({GoogleScholar: facultyData, Scopus: scopusData}, 'CombinedData');
+            });
+
+            function downloadExcel(data, fileName) {
+                var wb = XLSX.utils.book_new();
+                var ws = XLSX.utils.json_to_sheet(data);
+                XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+                XLSX.writeFile(wb, fileName + ".xlsx");
+            }
+
+// Function to display search results
+function displaySearchResults(foundFaculty, foundScopus) {
+    $('#results').empty(); // Clear existing results
+
+    if (foundFaculty.length > 0) {
+        $('#results').append('<h2>Google Scholar Search Results</h2>');
+        let googleScholarTable = '<table><thead><tr>' +
+                                 '<th>Name</th>' +
+                                 '<th>Citations</th>' +
+                                 '<th>H-Index</th>' +
+                                 '<th>i10-Index</th>' +
+                                 '<th>Yearly Citations</th>' +
+                                 '</tr></thead><tbody>';
+
+        foundFaculty.forEach(function(faculty, index) {
+            googleScholarTable += '<tr>' +
+                                  `<td><a href="#" class="faculty-name" data-index="${facultyData.findIndex(f => f.Name === faculty.Name)}">${faculty.Name}</a></td>` +
+                                  '<td>' + faculty.Citations + '</td>' +
+                                  '<td>' + faculty.H_Index + '</td>' +
+                                  '<td>' + faculty.i10_Index + '</td>' +
+                                  '<td>' + JSON.stringify(faculty.Yearly_Citations) + '</td>' +
+                                  '</tr>' +
+                                  `<tr class="papers-row" id="papers-${facultyData.findIndex(f => f.Name === faculty.Name)}" style="display:none"><td colspan="5"></td></tr>`;
+        });
+
+        googleScholarTable += '</tbody></table>';
+        $('#results').append(googleScholarTable);
+    }
+
+    if (foundScopus.length > 0) {
+        $('#results').append('<h2>Scopus Search Results</h2>');
+        let scopusTable = '<table><thead><tr>' +
+                          '<th>Title</th>' +
+                          '<th>Author</th>' +
+                          '<th>Publisher</th>' +
+                          '<th>Date</th>' +
+                          '<th>DOI</th>' +
+                          '<th>Citations</th>' +
+                          '</tr></thead><tbody>';
+
+        foundScopus.forEach(function(article) {
+            scopusTable += '<tr>' +
+                           '<td>' + (article.title ? article.title : 'N/A') + '</td>' +
+                           '<td>' + (article.creator ? article.creator : 'N/A') + '</td>' +
+                           '<td>' + (article.publisher ? article.publisher : 'N/A') + '</td>' +
+                           '<td>' + (article.date ? article.date : 'N/A') + '</td>' +
+                           '<td>' + (article.doi ? article.doi : 'N/A') + '</td>' +
+                           '<td>' + (article.citations ? article.citations : 'N/A') + '</td>' +
+                           '</tr>';
+        });
+
+        scopusTable += '</tbody></table>';
+        $('#results').append(scopusTable);
+    }
+
+    // Reattach the click event for faculty names
+    attachFacultyClickEvent();
+}
+
+// Function to attach click event for faculty names
+function attachFacultyClickEvent() {
+    $('.faculty-name').off('click').on('click', function(e) {
+        e.preventDefault();
+        let index = $(this).data('index');
+        let papersRow = $(`#papers-${index}`);
+
+        if (papersRow.is(':visible')) {
+            papersRow.hide();  // Hide papers if already visible
+        } else {
+            let papers = facultyData[index].Papers;
+            let papersContent = '';
+
+            if (papers.length > 0) {
+                papersContent += '<table><thead><tr>' +
+                                 '<th>Title</th><th>Citations</th><th>Year</th><th>Link</th></tr></thead><tbody>';
+                papers.forEach(function(paper) {
+                    papersContent += '<tr>' +
+                                     '<td>' + paper.title + '</td>' +
+                                     '<td>' + paper.citations + '</td>' +
+                                     '<td>' + paper.year + '</td>' +
+                                     '<td><a href="' + paper.link + '">Link</a></td>' +
+                                     '</tr>';
+                });
+                papersContent += '</tbody></table>';
+            } else {
+                papersContent = '<p>No papers available</p>';
+            }
+
+            papersRow.find('td').html(papersContent);
+            papersRow.show();  // Show papers
+        }
+    });
+}
+
+        // Function to display search results
+        function displaySearchResults(foundFaculty, foundScopus) {
+            $('#results').empty(); // Clear existing results
+
+            if (foundFaculty.length > 0) {
+                $('#results').append('<h2>Google Scholar Search Results</h2>');
+                let googleScholarTable = '<table><thead><tr>' +
+                                         '<th>Name</th>' +
+                                         '<th>Citations</th>' +
+                                         '<th>H-Index</th>' +
+                                         '<th>i10-Index</th>' +
+                                         '<th>Yearly Citations</th>' +
+                                         '</tr></thead><tbody>';
+
+                foundFaculty.forEach(function(faculty, index) {
+                    googleScholarTable += '<tr>' +
+                                          `<td>${faculty.Name}</td>` +
+                                          '<td>' + faculty.Citations + '</td>' +
+                                          '<td>' + faculty.H_Index + '</td>' +
+                                          '<td>' + faculty.i10_Index + '</td>' +
+                                          '<td>' + JSON.stringify(faculty.Yearly_Citations) + '</td>' +
+                                          '</tr>';
+                });
+
+                googleScholarTable += '</tbody></table>';
+                $('#results').append(googleScholarTable);
+            }
+
+            if (foundScopus.length > 0) {
+                $('#results').append('<h2>Scopus Search Results</h2>');
+                let scopusTable = '<table><thead><tr>' +
+                                  '<th>Title</th>' +
+                                  '<th>Author</th>' +
+                                  '<th>Publisher</th>' +
+                                  '<th>Date</th>' +
+                                  '<th>DOI</th>' +
+                                  '<th>Citations</th>' +
+                                  '</tr></thead><tbody>';
+
+                foundScopus.forEach(function(article) {
+                    scopusTable += '<tr>' +
+                                   '<td>' + (article.title ? article.title : 'N/A') + '</td>' +
+                                   '<td>' + (article.creator ? article.creator : 'N/A') + '</td>' +
+                                   '<td>' + (article.publisher ? article.publisher : 'N/A') + '</td>' +
+                                   '<td>' + (article.date ? article.date : 'N/A') + '</td>' +
+                                   '<td>' + (article.doi ? article.doi : 'N/A') + '</td>' +
+                                   '<td>' + (article.citations ? article.citations : 'N/A') + '</td>' +
+                                   '</tr>';
+                });
+
+                scopusTable += '</tbody></table>';
+                $('#results').append(scopusTable);
+            }
+        }
+    </script>
+</body>
+</html>
