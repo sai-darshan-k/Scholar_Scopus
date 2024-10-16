@@ -1,4 +1,4 @@
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, request
 import requests
 from bs4 import BeautifulSoup
 import gc  
@@ -19,7 +19,6 @@ API_KEY = config['API_KEY']
 CALLS_PER_SECOND = 1
 SECONDS_PER_CALL = 1 / CALLS_PER_SECOND
 
-
 @sleep_and_retry
 @limits(calls=CALLS_PER_SECOND, period=SECONDS_PER_CALL)
 def make_request(url, headers=None):
@@ -33,29 +32,23 @@ def make_request(url, headers=None):
         logging.error(f"An error occurred: {err}")
     return None
 
-
 class GoogleScholarScraper:
     def __init__(self):
         pass
 
-    def get_data_from_profile_link(self, profile_link):
+    def get_data_from_profile_link(self, profile_link, start_year=None, end_year=None):
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
 
         try:
-            # Use response streaming to reduce memory usage
             response = requests.get(profile_link, headers=headers, stream=True)
-
             if response.status_code == 200:
-                # Use `lxml` parser for efficient parsing
                 soup = BeautifulSoup(response.content, 'lxml')
 
-                # Extract name
                 name_element = soup.find('div', {'id': 'gsc_prf_in'})
                 name = name_element.text.strip() if name_element else "Name not found"
 
-                # Extract citations, h-index, and i10-index
                 citation_table = soup.find_all('td', {'class': 'gsc_rsb_std'})
                 if len(citation_table) >= 3:
                     citations = int(citation_table[0].text.strip()) if citation_table[0].text else 0
@@ -64,7 +57,6 @@ class GoogleScholarScraper:
                 else:
                     citations, h_index, i10_index = 0, "H-Index not found", "i10-Index not found"
 
-                # Fetch yearly citations (optimized year range)
                 yearly_citations = {}
                 graph_element = soup.find('div', {'id': 'gsc_rsb_cit'})
                 if graph_element:
@@ -74,10 +66,12 @@ class GoogleScholarScraper:
                     for year_element, count_element in zip(bar_elements, value_elements):
                         year = int(year_element.text.strip())
                         count = int(count_element.text.strip())
-                        if 2020 <= year <= 2024:  # Adjust the year range as needed
+                        if start_year and end_year:
+                            if start_year <= year <= end_year:
+                                yearly_citations[str(year)] = count
+                        else:
                             yearly_citations[str(year)] = count
 
-                # Fetch papers details (title, citations, year)
                 papers = []
                 paper_elements = soup.find_all('tr', {'class': 'gsc_a_tr'})
                 for paper_element in paper_elements:
@@ -89,18 +83,27 @@ class GoogleScholarScraper:
                     paper_citations = citation_element.text.strip() if citation_element and citation_element.text else "0"
 
                     year_element = paper_element.find('span', {'class': 'gsc_a_h'})
-                    year = year_element.text.strip() if year_element else "Unknown Year"
+                    year = int(year_element.text.strip()) if year_element and year_element.text.strip().isdigit() else None
 
-                    papers.append({
-                        'title': title,
-                        'link': link,
-                        'citations': paper_citations,
-                        'year': year
-                    })
+                    # Filter papers by year range
+                    if start_year and end_year:
+                        if year and start_year <= year <= end_year:
+                            papers.append({
+                                'title': title,
+                                'link': link,
+                                'citations': paper_citations,
+                                'year': year
+                            })
+                    else:
+                        papers.append({
+                            'title': title,
+                            'link': link,
+                            'citations': paper_citations,
+                            'year': year
+                        })
 
-                # Explicitly clear memory for large variables
                 del soup
-                gc.collect()  # Perform garbage collection to free up memory
+                gc.collect()
 
                 return {
                     'Name': name,
@@ -115,59 +118,31 @@ class GoogleScholarScraper:
         except Exception as e:
             return {'error': str(e)}
 
-    def scraping_multiple_faculties(self, profile_links):
+    def scraping_multiple_faculties(self, profile_links, start_year=None, end_year=None):
         data_list = []
         for profile_link in profile_links:
-            faculty_data = self.get_data_from_profile_link(profile_link)
+            faculty_data = self.get_data_from_profile_link(profile_link, start_year, end_year)
             if faculty_data:
                 data_list.append(faculty_data)
-            # Perform garbage collection after each faculty to free up memory
             gc.collect()
         return data_list
 
-
-@app.route('/')
-def index():
-    return render_template('index.html')
-
-
-@app.route('/scrape', methods=['GET'])
-def scrape():
-    profile_links = [
-        "https://scholar.google.com/citations?user=fzs9d1IAAAAJ&hl=en",
-        "https://scholar.google.com/citations?user=-ZYIiGAAAAAJ&hl=en",
-    ]
-
-    scraper = GoogleScholarScraper()
-    google_scholar_data = scraper.scraping_multiple_faculties(profile_links)
-
-    return jsonify({'google_scholar_data': google_scholar_data})
-
-
-@app.route('/scopus-scrape', methods=['GET'])
-def scopus_scrape():
-    profile_links = [
-        "https://www.scopus.com/authid/detail.uri?authorId=57223100630",
-        "https://www.scopus.com/authid/detail.uri?authorId=55079543700",
-        "https://www.scopus.com/authid/detail.uri?authorId=35737586100",
-    ]
-
+def scopus_scrape_internal(profile_links, start_year=None, end_year=None):
     headers = {"X-ELS-APIKey": API_KEY, "Accept": "application/json"}
     all_data = []
 
     for link in profile_links:
         author_id = link.split('authorId=')[-1]
-        # Adjusted API query URL based on correct Scopus parameters
         base_url = "https://api.elsevier.com/content/search/scopus"
-        query = f"?query=AU-ID({author_id})&date=2023-2024"
 
-        # Make the request
+        query = f"?query=AU-ID({author_id})"
+        if start_year and end_year:
+            query += f"&date={start_year}-{end_year}"
+
         response = make_request(base_url + query, headers=headers)
 
         if response:
             articles = response.get("search-results", {}).get("entry", [])
-            
-            # Process articles
             for entry in articles:
                 all_data.append({
                     "title": entry.get("dc:title", "No Title"),
@@ -180,61 +155,65 @@ def scopus_scrape():
         else:
             logging.error(f"Failed to retrieve data for author ID: {author_id}")
 
-    return jsonify({'scopus_data': all_data})
-
+    return all_data
 
 @app.route('/combined-scrape', methods=['GET'])
 def combined_scrape():
-    # Fetch Google Scholar Data
-    profile_links = [
-        "https://scholar.google.com/citations?user=fzs9d1IAAAAJ&hl=en",
-        "https://scholar.google.com/citations?user=-ZYIiGAAAAAJ&hl=en",
-        "https://scholar.google.com/citations?user=vGJxAzEAAAAJ&hl=en"
+    start_year = request.args.get('start_year', default=None, type=int)
+    end_year = request.args.get('end_year', default=None, type=int)
+
+    # Google Scholar data
+    google_scholar_profile_links = [
+     "https://scholar.google.com/citations?user=-ZYIiGAAAAAJ&hl=en",
+     "https://scholar.google.com/citations?hl=en&user=5Dl7tEYAAAAJ",
+     "https://scholar.google.co.in/citations?user=px8Z3Q4AAAAJ&hl=en",
+     "https://scholar.google.co.in/citations?user=jTCHV4kAAAAJ&hl=en",
+     "https://scholar.google.co.in/citations?user=_bbxYHsAAAAJ&hl=en&authuser=1",
+     "https://scholar.google.com/citations?user=bn6WQUoAAAAJ",
+     "https://scholar.google.com/citations?hl=en&user=ThELNO0AAAAJ",
+     "https://scholar.google.co.in/citations?user=ryhyx4IAAAAJ&hl=en",
+     "https://scholar.google.com/citations?user=prcv4fAAAAAJ&hl=en&oi=ao",
+     "https://scholar.google.com/citations?user=eu_o414AAAAJ&hl=en",
+     "https://scholar.google.com/citations?hl=en&user=uZXv4XIAAAAJ",
+     "https://scholar.google.com/citations?user=Cf2I4OoAAAAJ&hl=en",
+     "https://scholar.google.com/citations?hl=en&user=Li0r8uMAAAAJ",
+     "https://scholar.google.co.in/citations?user=FlLJ1SYAAAAJ&hl=en",
+     "https://scholar.google.com/citations?user=vjZ4yC0AAAAJ&hl=en&authuser=1",
+     "https://scholar.google.co.in/citations?user=AIdTGncAAAAJ&hl=en",
+     "https://scholar.google.com/citations?user=XPjU9AIAAAAJ&hl=en&authuser=1",
+     "https://scholar.google.co.in/citations?hl=en&user=Z34wmvMAAAAJ",
+     "https://scholar.google.com/citations?user=vGJxAzEAAAAJ&hl=en",
+     "https://scholar.google.com/citations?user=hlTGb-0AAAAJ&hl=en",
+     "https://scholar.google.co.in/citations?user=hC5psv4AAAAJ",
+     "https://scholar.google.com/citations?user=cE0jxPcAAAAJ&hl=en",
+     "https://scholar.google.com/citations?user=GYjXshwAAAAJ",
+     "https://scholar.google.com/citations?hl=en&user=HKK_hlsAAAAJ",
+     "https://scholar.google.co.in/citations?user=qIFXtnYAAAAJ&hl=en",
+     "https://scholar.google.com/citations?hl=en&user=FmtW9kIAAAAJ",
+     "https://scholar.google.com/citations?user=_89sYcIAAAAJ&hl=en&oi=ao",
+     "https://scholar.google.com/citations?user=qVkPhiAAAAAJ&hl=en",
+     "https://scholar.google.co.in/citations?user=Hj3_OtwAAAAJ&hl=en",
+     "https://scholar.google.co.in/citations?user=kNdafyoAAAAJ&hl=en",
     ]
-
     scraper = GoogleScholarScraper()
-    google_scholar_data = scraper.scraping_multiple_faculties(profile_links)
+    google_scholar_data = scraper.scraping_multiple_faculties(google_scholar_profile_links, start_year, end_year)
 
-    # Fetch Scopus Data
+    # Scopus data
     scopus_profile_links = [
         "https://www.scopus.com/authid/detail.uri?authorId=57223100630",
         "https://www.scopus.com/authid/detail.uri?authorId=55079543700",
         "https://www.scopus.com/authid/detail.uri?authorId=35737586100",
     ]
-
-    headers = {"X-ELS-APIKey": API_KEY, "Accept": "application/json"}
-    all_data = []
-
-    for link in scopus_profile_links:
-        author_id = link.split('authorId=')[-1]
-        # Adjusted API query URL based on correct Scopus parameters
-        base_url = "https://api.elsevier.com/content/search/scopus"
-        query = f"?query=AU-ID({author_id})&date=2023-2024"
-
-        # Make the request
-        response = make_request(base_url + query, headers=headers)
-
-        if response:
-            articles = response.get("search-results", {}).get("entry", [])
-            
-            # Process articles
-            for entry in articles:
-                all_data.append({
-                    "title": entry.get("dc:title", "No Title"),
-                    "creator": entry.get("dc:creator", "No Author"),
-                    "publisher": entry.get("prism:publicationName", "No Publisher"),
-                    "date": entry.get("prism:coverDate", "No Date"),
-                    "doi": entry.get("prism:doi", "No DOI"),
-                    "citations": entry.get("citedby-count", "No Data")
-                })
-        else:
-            logging.error(f"Failed to retrieve data for author ID: {author_id}")
+    scopus_data = scopus_scrape_internal(scopus_profile_links, start_year, end_year)
 
     return jsonify({
         'google_scholar_data': google_scholar_data,
-        'scopus_data': all_data
+        'scopus_data': scopus_data
     })
 
+@app.route('/')
+def index():
+    return render_template('index.html')
 
 if __name__ == '__main__':
     app.run(debug=True)

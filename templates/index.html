@@ -115,6 +115,16 @@
     width: 100%;
     text-align: center;
 }
+#yearInputs {
+            display: flex;
+            justify-content: center;
+            margin: 10px 0;
+        }
+        #yearInputs input {
+            margin: 0 5px;
+            padding: 5px;
+            width: 80px;
+        }
 #searchButton, #refreshButton {
     margin: 0 5px;
 }
@@ -134,6 +144,10 @@
         <h1>Scholars Data of Computer Science</h1>
         <div id="searchContainer">
             <input type="text" id="searchBar" placeholder="Search by name or title..." />
+            <div id="yearInputs">
+                <input type="number" id="startYear" placeholder="Start Year">
+                <input type="number" id="endYear" placeholder="End Year">
+            </div>
             <div>
                 <button id="searchButton">Search</button>
                 <button id="refreshButton">Refresh</button>
@@ -155,27 +169,33 @@
         let scopusData = [];
 
         $(document).ready(function() {
-    // Fetch Google Scholar data
-    $('#scrapeButton').click(function() {
-        $('#loadingMessage').text('Loading... please wait');
-        $('#results').empty();
+            $('#scrapeButton').click(function() {
+                $('#loadingMessage').text('Loading... please wait');
+                $('#results').empty();
 
-        // Perform the AJAX request to fetch combined data
-        $.ajax({
-            url: '/combined-scrape',
-            type: 'GET',
-            success: function(data) {
-                facultyData = data.google_scholar_data;  // Store the faculty data
-                scopusData = data.scopus_data; // Store the Scopus data
-                displayResults(facultyData, scopusData);
-                $('#loadingMessage').text('');  // Clear the loading message
-            },
-            error: function() {
-                $('#results').append('<p>An error occurred while fetching data.</p>');
-                $('#loadingMessage').text('');  // Clear the loading message
-            }
-        });
-    });
+                const startYear = $('#startYear').val();
+                const endYear = $('#endYear').val();
+
+                // Perform the AJAX request to fetch combined data with year range
+                $.ajax({
+                    url: '/combined-scrape',
+                    type: 'GET',
+                    data: {
+                        start_year: startYear,
+                        end_year: endYear
+                    },
+                    success: function(data) {
+                        facultyData = data.google_scholar_data;
+                        scopusData = data.scopus_data;
+                        displayResults(facultyData, scopusData);
+                        $('#loadingMessage').text('');
+                    },
+                    error: function() {
+                        $('#results').append('<p>An error occurred while fetching data.</p>');
+                        $('#loadingMessage').text('');
+                    }
+                });
+            });
 
     // Search function for Google Scholar and Scopus
     $('#searchButton').click(function() {
